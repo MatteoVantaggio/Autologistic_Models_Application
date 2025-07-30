@@ -1,0 +1,440 @@
+---
+title: "HOMEWORK_8"
+author: "Matteo Vantaggio"
+date: "2024-10-5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+```{r include=FALSE}
+library(vegan)
+library(skimr)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(inspectdf)
+library(tidyr)
+library(spdep)
+library(spatialreg)
+library(spatialEco)
+library(ngspatial)
+library(sp)
+```
+The analysis presented in this report is based on the **Oribatid mite** data, which includes information about 35 species of Oribatid mites (Acari: Oribatida) collected from 70 sampling sites in the **Station de biologie des Laurentides** of the University of Montreal, Quebec, Canada, in June 1989. This data set provides a comprehensive view of mite communities in relation to environmental and geographic factors.
+```{r}
+data('mite')
+data("mite.env")
+data('mite.xy')
+head(mite)
+head(mite.env)
+head(mite.xy)
+```
+- **mite**: This dataset contains the abundances of 35 morphospecies of Oribatid mites across 70 cores of mostly Sphagnum mosses. The data was collected from a variety of locations, providing insights into species diversity and distribution within the study area.
+  
+- **mite.env**: This dataset contains 5 environmental covariates (e.g., substrate and microtopographic variables) for each of the 70 sampling sites, offering contextual information to assess how environmental factors influence mite communities.
+  
+- **mite.xy**: This dataset provides the geographic coordinates (x, y) of the 70 sampling sites, enabling spatial analysis of mite distribution and environmental gradients.
+
+Oribatid mites are a highly diverse group of small, soil-dwelling arthropods, typically ranging in size from 0.2 to 1.2 mm. These mites are predominantly microphytophagous and detritivorous, thriving in well-aerated soils or complex substrates like Sphagnum mosses found in bogs and wet forests. In these environments, the abundance of mites can reach several hundred thousand individuals per square meter. Local assemblages can include over a hundred species, many of which are rare, making them an interesting subject for studying community-environment relationships at fine spatial scales.
+
+This dataset, organized by the abundance of each mite species at the sampling sites, provides valuable insights into how environmental factors may shape the distribution and diversity of Oribatid mites within the studied area.
+
+## Exploratory Data Analysis
+
+We begin by summarizing the datasets to understand their structure and contents.
+```{r}
+skim(mite)
+skim(mite.xy) 
+```
+To run autologistic models, we need the data in a presence/absence format. The original data contains abundance counts, so we will convert these into binary presence (1) or absence (0) values for the two species of interest: ONOV and LCIL.
+```{r}
+mite_pa <- mite %>%
+  mutate(across(c(ONOV, LCIL), ~ ifelse(. > 0, 1, 0)))  
+
+# Display summary of the transformed data
+summary(mite_pa[,14])
+summary(mite_pa[,16])
+```
+Next, we explore the spatial distribution of the two species, ONOV and LCIL, using their geographic coordinates. We plot the presence and absence of each species at the sampling sites.
+```{r}
+# Plot presence (green) and absence (red) of ONOV
+plot(mite.xy$x, mite.xy$y, col = ifelse(mite_pa$ONOV >= 1, "green", "red"), pch = 16, 
+     main = "Presence (green) and Absence (red) of ONOV")
+
+# Plot presence (green) and absence (red) of LCIL
+plot(mite.xy$x, mite.xy$y, col = ifelse(mite_pa$LCIL >= 1, "green", "red"), pch = 16, 
+     main = "Presence (green) and Absence (red) of LCIL")
+```
+
+To get a better understanding of the distribution of the levels within the categorical variables, we can use the inspect_cat() function, which provides a visual summary of the factor variables' levels
+```{r}
+
+mite_env1 <- mite.env %>%
+  inspect_cat()
+mite_env1$levels$eye_color
+
+mite_env1 %>%
+  show_plot()
+```
+Next, we combine the presence/absence data (mite_pa), environmental data (mite.env), and geographic coordinates (mite.xy) into one dataset (mite_combined). We then provide numeric summaries of the relationships between the categorical covariates and the presence/absence of ONOV.
+```{r}
+# Combine data
+mite_combined <- cbind(mite_pa, mite.env, mite.xy)
+
+# Numeric summary for Substrate and ONOV
+mite_combined %>%
+  group_by(Substrate, ONOV) %>%
+  summarise(count = n()) %>%
+  spread(key = ONOV, value = count, fill = 0)
+
+# Numeric summary for Shrub and ONOV
+mite_combined %>%
+  group_by(Shrub, ONOV) %>%
+  summarise(count = n()) %>%
+  spread(key = ONOV, value = count, fill = 0)
+
+# Numeric summary for Topo and ONOV
+mite_combined %>%
+  group_by(Topo, ONOV) %>%
+  summarise(count = n()) %>%
+  spread(key = ONOV, value = count, fill = 0)
+```
+
+We now focus on the two numeric covariates: **SubsDens** (substrate density) and **WatrCont** (water content of the substrate). We will visualize their distributions in relation to the presence or absence of **ONOV** using boxplots.
+The following boxplot visualizes the distribution of **SubsDens** (substrate density) for the two levels of **ONOV** (presence/absence). The plot helps us assess how the substrate density varies between sites where **ONOV** is present versus absent.
+```{r}
+ggplot(mite_combined, aes(x = factor(ONOV), y = SubsDens)) +
+  geom_boxplot(fill = "grey", color = "black") +
+  labs(x = "ONOV Presence/Absence", y = "Substrate density (g/L)", 
+       title = " ") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) 
+
+ggplot(mite_combined, aes(x = factor(ONOV), y = WatrCont)) +
+  geom_boxplot(fill = "grey", color = "black") +
+  labs(x = "ONOV Presence/Absence", y = "Water content of the substrate (g/L)", 
+       title = " ") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) 
+```
+We now repeat the same analysis for the **LCIL** species, examining its presence/absence across the environmental covariates and visualizing its relationship with the numeric variables **SubsDens** and **WatrCont**.
+We begin by creating contingency tables that show the presence/absence of **LCIL** across the levels of the categorical variables: **Substrate**, **Shrub**, and **Topo**. These tables provide a summary of how the species' presence is distributed within each level of these environmental factors.
+```{r}
+mite_combined %>%
+  group_by(Substrate, LCIL) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = LCIL, values_from = count, values_fill = 0)
+
+# Contingency table for LCIL presence/absence across levels of Shrub
+mite_combined %>%
+  group_by(Shrub, LCIL) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = LCIL, values_from = count, values_fill = 0)
+
+# Contingency table for LCIL presence/absence across levels of Topo
+mite_combined %>%
+  group_by(Topo, LCIL) %>%
+  summarise(count = n()) %>%
+  pivot_wider(names_from = LCIL, values_from = count, values_fill = 0)
+
+```
+
+Next, we visualize the distribution of SubsDens (substrate density) based on the presence or absence of LCIL using a boxplot. This helps us understand how substrate density varies with the species' presence.
+```{r}
+ggplot(mite_combined, aes(x = factor(LCIL), y = SubsDens)) +
+  geom_boxplot(fill = "grey", color = "black") +
+  labs(x = "LCIL Presence/Absence", y = "Substrate density (g/L)", 
+       title = "SubsDens by LCIL Presence/Absence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+```
+Finally, we examine the distribution of WatrCont (water content of the substrate) across the presence and absence of LCIL using a boxplot. This provides insight into how water content might influence the species' occurrence.
+```{r}
+ggplot(mite_combined, aes(x = factor(LCIL), y = WatrCont)) +
+  geom_boxplot(fill = "grey", color = "black") +
+  labs(x = "LCIL Presence/Absence", y = "Water content of the substrate (g/L)", 
+       title = "WatrCont by LCIL Presence/Absence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+```
+Now we examine the correlation between the two quantitative variables: **SubsDens** (substrate density) and **WatrCont** (water content). The correlation coefficient is calculated to assess the strength of their relationship.
+```{r}
+cor(mite.env$SubsDens, mite.env$WatrCont)
+```
+The result shows a weak positive correlation between the two variables.
+
+Next, we use the Wilcoxon test to assess whether there are statistically significant differences in the quantitative variables (SubsDens and WatrCont) between the presence and absence of ONOV and LCIL.
+```{r}
+wilcox.test(SubsDens ~ ONOV, data = mite_combined)  
+```
+The Wilcoxon test indicates that the difference in SubsDens between sites with and without ONOV is statistically significant (p-value < 0.05).
+```{r}
+wilcox.test(SubsDens ~ LCIL, data = mite_combined) 
+```
+For LCIL, the difference in SubsDens between the presence and absence of the species is not statistically significant (p-value > 0.05).
+```{r}
+wilcox.test(WatrCont ~ ONOV, data = mite_combined) 
+```
+The difference in WatrCont between sites with and without ONOV is statistically significant.
+
+```{r}
+wilcox.test(WatrCont ~ LCIL, data = mite_combined)
+```
+Similarly, the difference in WatrCont between sites with and without LCIL is also statistically significant.
+Based on the Wilcoxon test results, we conclude that SubsDens shows a significant difference for ONOV but not for LCIL. On the other hand, WatrCont shows significant differences for both ONOV and LCIL. These results should inform the decision on whether to include SubsDens as a covariate in the autologistic model.
+
+
+We then conduct Chi-square tests to examine the association between the presence/absence of ONOV and the categorical variables (Substrate, Shrub, and Topo).
+```{r warning=FALSE}
+chisq.test(table(mite_combined$ONOV, mite_combined$Substrate))
+chisq.test(table(mite_combined$ONOV, mite_combined$Shrub))
+chisq.test(table(mite_combined$ONOV, mite_combined$Topo))
+
+```
+We repeat the Chi-square tests for LCIL to assess its relationship with the same categorical variables.
+```{r warning=FALSE}
+chisq.test(table(mite_combined$LCIL, mite_combined$Substrate))
+chisq.test(table(mite_combined$LCIL, mite_combined$Shrub))
+chisq.test(table(mite_combined$LCIL, mite_combined$Topo))
+```
+ONOV shows significant associations with Substrate and Shrub, but not with Topo, while LCIL shows significant associations with Shrub and Topo, but not with Substrate. These results can help inform which categorical variables might be relevant for inclusion in the autologistic model for predicting the presence or absence of ONOV and LCIL.
+
+## Fit the Models
+
+First we assign spatial coordinates to the dataset.
+```{r}
+coordinates(mite_combined) <- ~x + y
+gridded(mite_combined) <- FALSE
+```
+
+Then we define rook and queen spatial neighborhood structures, create adjacency matriceswhich represent the spatial relationships between sites and transform the adjacency matrices into symmetric matrices to ensure consistency in spatial relationships.
+```{r}
+rook <- dnearneigh(coordinates(mite_combined), 0, 1)
+queen <- dnearneigh(coordinates(mite_combined), 0, 1.5)
+rook_spmat <- nb2mat(rook, style = "B", zero.policy = TRUE)
+queen_spmat <- nb2mat(queen, style = "B", zero.policy = TRUE)
+rook_spmat <- diag(1, 70, 70) %*% rook_spmat
+queen_spmat <- diag(1, 70, 70) %*% queen_spmat
+
+```
+To compute the neighbor sums we define a function that multiplies the adjacency matrix by the species presence vector and sums the results
+```{r}
+calc_neighbors_sum <- function(spmat, species_presence) {
+  apply(spmat, 1, function(x) sum(x * species_presence))
+}
+mite_combined$sum_neighbors_ONOV_rook <- calc_neighbors_sum(rook_spmat, mite_combined$ONOV)
+mite_combined$sum_neighbors_LCIL_rook <- calc_neighbors_sum(rook_spmat, mite_combined$LCIL)
+mite_combined$sum_neighbors_ONOV_queen <- calc_neighbors_sum(queen_spmat, mite_combined$ONOV)
+mite_combined$sum_neighbors_LCIL_queen <- calc_neighbors_sum(queen_spmat, mite_combined$LCIL)
+
+```
+
+Now we are going to fit autologistic models for a given species using the `glm` function. The models incorporate spatial dependencies (neighbor sums) and other covariates.
+
+The function `fit_autologistic_models` accepts the following parameters:
+- `species`: The binary response variable indicating species presence/absence.
+- `neighbors_sum`: A variable capturing the sum of neighboring sites' species presence.
+- `data`: The dataset containing the covariates and response variable.
+
+Based on the exploratory analysis, the quantitative variable "WatrCont" is significant for both species, ONOV and LCIL. Therefore, we fit a simplified model using only "WatrCont" and the neighbor sum as predictors. For comparison, we also fit a full model that includes all covariates, including potentially non-significant ones.
+```{r}
+fit_autologistic_models <- function(species, neighbors_sum, data) {
+  list(
+    with_WatrCont = glm(species ~ WatrCont + neighbors_sum, family = binomial, data = data),
+    full = glm(species ~ SubsDens + WatrCont + Shrub + Topo + Substrate + neighbors_sum, family = binomial, data = data)
+  )
+}
+```
+
+We estimate autologistic models for the species ONOV and LCIL using two spatial neighborhood structures: **Rook** and **Queen**. For each structure:
+- Two models are fitted using the `fit_autologistic_models` function:
+  1. **With Water Content (`with_WatrCont`)**: Includes water content (`WatrCont`) and the spatial neighbor sum (`neighbors_sum`) as predictors.
+  2. **Full Model (`full`)**: Includes all covariates (`SubsDens`, `WatrCont`, `Shrub`, `Topo`, `Substrate`) and neighbor sum.
+```{r warning=FALSE, include=FALSE}
+# Models for ONOV and LCIL with Rook structure
+models_ONOV_rook <- fit_autologistic_models(mite_combined$ONOV, mite_combined$sum_neighbors_ONOV_rook, mite_combined)
+models_LCIL_rook <- fit_autologistic_models(mite_combined$LCIL, mite_combined$sum_neighbors_LCIL_rook, mite_combined)
+
+# Models for ONOV and LCIL with Queen structure
+models_ONOV_queen <- fit_autologistic_models(mite_combined$ONOV, mite_combined$sum_neighbors_ONOV_queen, mite_combined)
+models_LCIL_queen <- fit_autologistic_models(mite_combined$LCIL, mite_combined$sum_neighbors_LCIL_queen, mite_combined)
+```
+
+The Akaike Information Criterion (AIC) is calculated for each model to compare their goodness of fit while penalizing for complexity. Based on the AIC values, the best model for each combination of species and spatial structure is chosen. The model with "WatrCont"  is selected.
+```{r echo=FALSE}
+# AIC calculation for Rook structure
+aic_ONOV_rook <- AIC(models_ONOV_rook$with_WatrCont, models_ONOV_rook$full)
+aic_LCIL_rook <- AIC(models_LCIL_rook$with_WatrCont, models_LCIL_rook$full)
+
+# AIC calculation for Queen structure
+aic_ONOV_queen <- AIC(models_ONOV_queen$with_WatrCont, models_ONOV_queen$full)
+aic_LCIL_queen <- AIC(models_LCIL_queen$with_WatrCont, models_LCIL_queen$full)
+
+aic_table <- data.frame(
+  Model = c("ONOV Rook - WatrCont", "ONOV Rook - Full", 
+            "LCIL Rook - WatrCont", "LCIL Rook - Full", 
+            "ONOV Queen - WatrCont", "ONOV Queen - Full", 
+            "LCIL Queen - WatrCont", "LCIL Queen - Full"),
+  AIC = c(aic_ONOV_rook$AIC[1], aic_ONOV_rook$AIC[2], 
+          aic_LCIL_rook$AIC[1], aic_LCIL_rook$AIC[2], 
+          aic_ONOV_queen$AIC[1], aic_ONOV_queen$AIC[2], 
+          aic_LCIL_queen$AIC[1], aic_LCIL_queen$AIC[2])
+)
+
+# Print the table
+print(aic_table)
+best_model_ONOV_rook <- models_ONOV_rook$with_WatrCont
+best_model_LCIL_rook <- models_LCIL_rook$with_WatrCont
+best_model_ONOV_queen <- models_ONOV_queen$with_WatrCont
+best_model_LCIL_queen <- models_LCIL_queen$with_WatrCont
+```
+### Prediction accuracy
+We define a function, `predict_accuracy`, to evaluate the performance of the selected models:
+1. **Predicted Probabilities**: Calculated using the `predict` function with `type = "response"`.
+2. **Predicted Classes**: Converted to binary predictions based on a threshold of 0.5.
+3. **Confusion Matrix**: A table comparing observed and predicted classes.
+4. **Accuracy**: Computed as the percentage of correctly classified instances.
+```{r}
+predict_accuracy <- function(model, species_presence, data) {
+  predicted_prob <- predict(model, type = "response")
+  predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+  table_result <- table(species_presence, predicted_class)
+  accuracy <- 100 * sum(diag(table_result)) / sum(table_result)
+  list(table = table_result, accuracy = accuracy)
+}
+```
+```{r include=FALSE}
+# Accuracy for ONOV with Rook structure
+accuracy_ONOV_rook <- predict_accuracy(best_model_ONOV_rook, mite_combined$ONOV, mite_combined)
+
+# Accuracy for LCIL with Rook structure
+accuracy_LCIL_rook <- predict_accuracy(best_model_LCIL_rook, mite_combined$LCIL, mite_combined)
+
+# Accuracy for ONOV with Queen structure
+accuracy_ONOV_queen <- predict_accuracy(best_model_ONOV_queen, mite_combined$ONOV, mite_combined)
+
+# Accuracy for LCIL with Queen structure
+accuracy_LCIL_queen <- predict_accuracy(best_model_LCIL_queen, mite_combined$LCIL, mite_combined)
+
+```
+We then compare the accuracy of the autologistic models built using the "glm" function with the ones built using the function "autologistic" from package "ngspatial".
+```{r}
+fit_ngspatial <- function(species_presence, data, spmat) {
+  autologistic(species_presence ~ coordinates(data) + data$WatrCont - 1, 
+               data, spmat, method = "PL", control = list(nodes = 2, confint = "bootstrap", bootit = 200))
+}
+```
+```{r include=FALSE}
+ngspatial_ONOV_rook <- fit_ngspatial(mite_combined$ONOV, mite_combined, rook_spmat)
+ngspatial_LCIL_rook <- fit_ngspatial(mite_combined$LCIL, mite_combined, rook_spmat)
+ngspatial_ONOV_queen <- fit_ngspatial(mite_combined$ONOV, mite_combined, queen_spmat)
+ngspatial_LCIL_queen <- fit_ngspatial(mite_combined$LCIL, mite_combined, queen_spmat)
+
+# Accuratezza delle predizioni del modello ngspatial
+predict_ngspatial_accuracy <- function(ngspatial_model, species_presence) {
+  predicted_prob <- ngspatial_model$fitted.values
+  predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+  table_result <- table(species_presence, predicted_class)
+  accuracy <- 100 * sum(diag(table_result)) / sum(table_result)
+  list(table = table_result, accuracy = accuracy)
+}
+
+# Accuratezza per ciascun modello ngspatial
+accuracy_ngspatial_ONOV_rook <- predict_ngspatial_accuracy(ngspatial_ONOV_rook, mite_combined$ONOV)
+accuracy_ngspatial_LCIL_rook <- predict_ngspatial_accuracy(ngspatial_LCIL_rook, mite_combined$LCIL)
+accuracy_ngspatial_ONOV_queen <- predict_ngspatial_accuracy(ngspatial_ONOV_queen, mite_combined$ONOV)
+accuracy_ngspatial_LCIL_queen <- predict_ngspatial_accuracy(ngspatial_LCIL_queen, mite_combined$LCIL)
+
+```
+
+```{r echo=FALSE}
+# Risultati finali: confronto delle accuratezze tra il miglior modello ngspatial per ogni specie e struttura di vicinato
+# Store the accuracy results for ngspatial models
+ngspatial_accuracies <- data.frame(
+  model = c("ngspatial_ONOV_rook", "ngspatial_LCIL_rook", "ngspatial_ONOV_queen", "ngspatial_LCIL_queen"),
+  accuracy = c(
+    accuracy_ngspatial_ONOV_rook$accuracy,
+    accuracy_ngspatial_LCIL_rook$accuracy,
+    accuracy_ngspatial_ONOV_queen$accuracy,
+    accuracy_ngspatial_LCIL_queen$accuracy
+  )
+)
+
+# Store the accuracy results for GLM models
+glm_accuracies <- data.frame(
+  model = c("glm_ONOV_rook", "glm_LCIL_rook", "glm_ONOV_queen", "glm_LCIL_queen"),
+  accuracy = c(
+    accuracy_ONOV_rook$accuracy,
+    accuracy_LCIL_rook$accuracy,
+    accuracy_ONOV_queen$accuracy,
+    accuracy_LCIL_queen$accuracy
+  )
+)
+
+# Combine both ngspatial and GLM accuracies into a single dataframe
+accuracy_table <- rbind(
+  data.frame(model = paste("ngspatial", ngspatial_accuracies$model), accuracy = ngspatial_accuracies$accuracy),
+  data.frame(model = paste("glm", glm_accuracies$model), accuracy = glm_accuracies$accuracy)
+)
+
+# View the final accuracy table
+print(accuracy_table)
+
+```
+
+The autologistic models built using the function "glm" seem more accurate.
+
+#### Fit Simple Logistic Models
+For comparison, simple logistic regression models are fitted for each species using `WatrCont` as the predictor and the predictive maps for autologistic and simple logistic models are visualized:
+```{r include=FALSE}
+simple_logistic_ONOV <- glm(ONOV ~ WatrCont, family = binomial, data = mite_combined)
+simple_logistic_LCIL <- glm(LCIL ~ WatrCont, family = binomial, data = mite_combined)
+pred_simple_logistic_ONOV <- ifelse(predict(simple_logistic_ONOV, type = "response") > 0.5, 1, 0)
+pred_simple_logistic_LCIL <- ifelse(predict(simple_logistic_LCIL, type = "response") > 0.5, 1, 0)
+
+pred_autologistic_ONOV_rook <- ifelse(predict(best_model_ONOV_rook, type = "response") > 0.5, 1, 0)
+pred_autologistic_LCIL_rook <- ifelse(predict(best_model_LCIL_rook, type = "response") > 0.5, 1, 0)
+pred_autologistic_ONOV_queen <- ifelse(predict(best_model_ONOV_queen, type = "response") > 0.5, 1, 0)
+pred_autologistic_LCIL_queen <- ifelse(predict(best_model_LCIL_queen, type = "response") > 0.5, 1, 0)
+
+```
+```{r}
+par(mfrow = c(2, 2)) # 2x2 grid for the maps
+
+# ONOV - Rook
+plot(mite.xy$x, mite.xy$y, col = ifelse(pred_autologistic_ONOV_rook == 1, "green", "red"), pch = 16, main = "ONOV - Autologistic Rook")
+# LCIL - Rook
+plot(mite.xy$x, mite.xy$y, col = ifelse(pred_autologistic_LCIL_rook == 1, "green", "red"), pch = 16, main = "LCIL - Autologistic Rook")
+# ONOV - Queen
+plot(mite.xy$x, mite.xy$y, col = ifelse(pred_autologistic_ONOV_queen == 1, "green", "red"), pch = 16, main = "ONOV - Autologistic Queen")
+# LCIL - Queen
+plot(mite.xy$x, mite.xy$y, col = ifelse(pred_autologistic_LCIL_queen == 1, "green", "red"), pch = 16, main = "LCIL - Autologistic Queen")
+
+```
+```{r}
+par(mfrow = c(1, 2)) # 1x2 grid for the maps
+
+# ONOV - Simple Logistic
+plot(mite.xy$x, mite.xy$y, col = ifelse(pred_simple_logistic_ONOV == 1, "green", "red"), pch = 16, main = "ONOV - Simple Logistic")
+# LCIL - Simple Logistic
+plot(mite.xy$x, mite.xy$y, col = ifelse(pred_simple_logistic_LCIL == 1, "green", "red"), pch = 16, main = "LCIL - Simple Logistic")
+
+```
+The accuracy of the simple logistic models is calculated using the predict_accuracy function previously defined:
+```{r echo=FALSE}
+accuracy_simple_logistic_ONOV <- predict_accuracy(simple_logistic_ONOV, mite_combined$ONOV, mite_combined)
+accuracy_simple_logistic_LCIL <- predict_accuracy(simple_logistic_LCIL, mite_combined$LCIL, mite_combined)
+accuracy_table <- data.frame(
+  Model = c("Simple_Logistic_ONOV", "Simple_Logistic_LCIL"),
+  Accuracy = c(94.29, 88.57)
+)
+
+# Print the accuracy table
+print(accuracy_table)
+
+```
+The simple logistic models perform very well and similar to the spatial autologistic models in terms of accuracy of the predictions.
