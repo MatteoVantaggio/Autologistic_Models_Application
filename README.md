@@ -42,4 +42,4 @@ To analyze and model the spatial presence/absence patterns of two species of mit
 
 ## 🔗 Report Access
 
-👉 [**Click here to view the full HTML report**](https://tuo-username.github.io/nome-repo/HOMEWORK_8.html)
+[**Click here to view the full HTML report**](https://matteovantaggio.github.io/Autologistic_Models_Application/)
