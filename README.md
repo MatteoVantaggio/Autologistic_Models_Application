@@ -8,7 +8,7 @@ This project was developed as part of coursework for a graduate-level class in S
 To analyze and model the spatial presence/absence patterns of two species of mites—**Oppiella nova (ONOV)** and **Lepidozetes ciliatus (LCIL)**—using logistic and autologistic regression models, and to assess the effect of spatial autocorrelation and environmental variables on species distribution.
 
 
-## 🔍 Methodology
+## Methodology
 
 ### 1. **Data Preparation**
 - Created binary presence/absence variables for species ONOV and LCIL.
